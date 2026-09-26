@@ -2622,7 +2622,31 @@ function updateDriverOnFoot(dt){
 // CONTROLS
 ////////////////////////////////////////////////////////////
 
-let gamePaused=false;
+// Global pause state shared safely by every script block and the mobile controls.
+// Use `var` so the value is also available as window.gamePaused to any later
+// script, even if an older browser/mobile wrapper evaluates scripts in stages.
+var gamePaused = false;
+window.gamePaused = false;
+
+// Compatibility aliases for older mobile/pause code using alternate spellings.
+Object.defineProperty(window,"gamePause",{
+    configurable:true,
+    get:()=>window.gamePaused,
+    set:v=>{window.gamePaused=!!v;}
+});
+Object.defineProperty(window,"gamePuaseed",{
+    configurable:true,
+    get:()=>window.gamePaused,
+    set:v=>{window.gamePaused=!!v;}
+});
+
+// Keep the spelling used by the current game code synced with the global value.
+Object.defineProperty(window,"gamePaused",{
+    configurable:true,
+    get:()=>gamePaused,
+    set:v=>{gamePaused=!!v;}
+});
+
 
 function togglePause(){
     if(!started) return;
