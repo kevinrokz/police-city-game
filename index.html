@@ -2622,38 +2622,18 @@ function updateDriverOnFoot(dt){
 // CONTROLS
 ////////////////////////////////////////////////////////////
 
-// Global pause state shared safely by every script block and the mobile controls.
-// Use `var` so the value is also available as window.gamePaused to any later
-// script, even if an older browser/mobile wrapper evaluates scripts in stages.
-var gamePaused = false;
-window.gamePaused = false;
-
-// Compatibility aliases for older mobile/pause code using alternate spellings.
-Object.defineProperty(window,"gamePause",{
-    configurable:true,
-    get:()=>window.gamePaused,
-    set:v=>{window.gamePaused=!!v;}
-});
-Object.defineProperty(window,"gamePuaseed",{
-    configurable:true,
-    get:()=>window.gamePaused,
-    set:v=>{window.gamePaused=!!v;}
-});
-
-// Keep the spelling used by the current game code synced with the global value.
-Object.defineProperty(window,"gamePaused",{
-    configurable:true,
-    get:()=>gamePaused,
-    set:v=>{gamePaused=!!v;}
-});
+// ONE global pause state for the entire game.
+// Do not redefine window.pcsPaused: a `var` global already creates that
+// property and redefining it causes "Cannot redefine property: pcsPaused".
+var pcsPaused = false;
 
 
 function togglePause(){
     if(!started) return;
-    gamePaused=!gamePaused;
+    pcsPaused=!pcsPaused;
     const overlay=document.getElementById("pauseOverlay");
-    if(overlay) overlay.style.display=gamePaused?"flex":"none";
-    if(gamePaused){
+    if(overlay) overlay.style.display=pcsPaused?"flex":"none";
+    if(pcsPaused){
         for(const key of Object.keys(keys)){
             keys[key]=false;
         }
@@ -2672,7 +2652,7 @@ window.addEventListener(
             return;
         }
 
-        if(gamePaused){
+        if(pcsPaused){
             e.preventDefault();
             return;
         }
@@ -7175,7 +7155,7 @@ document.getElementById("specialEncounterUse").onclick=()=>{
 };
 
 function returnToMenu(){
-    gamePaused=false;
+    pcsPaused=false;
     const pauseOverlay=document.getElementById("pauseOverlay");
     if(pauseOverlay) pauseOverlay.style.display="none";
     caughtFreeze=false;
@@ -7385,7 +7365,7 @@ function setGameMode(mode){
 
 function startGame(mode){
 
-    gamePaused=false;
+    pcsPaused=false;
     const pauseOverlay=document.getElementById("pauseOverlay");
     if(pauseOverlay) pauseOverlay.style.display="none";
     setGameMode(mode);
@@ -7502,7 +7482,7 @@ function animate(){
         started
     ){
 
-        if(gamePaused){
+        if(pcsPaused){
             renderer.render(scene,camera);
             return;
         }
@@ -7636,7 +7616,7 @@ animate();
         if(Math.abs(ny)>0.18) setKey(ny<0?"ArrowUp":"ArrowDown",true);
     }
     joystick.addEventListener("pointerdown",e=>{
-        if(!isTouch() || !started || gamePaused || replay.active) return;
+        if(!isTouch() || !started || pcsPaused || replay.active) return;
         e.preventDefault();
         joyPointerId=e.pointerId;
         try{joystick.setPointerCapture(e.pointerId);}catch(err){}
@@ -7660,7 +7640,7 @@ animate();
     });
 
     function activateTouchTurbo(){
-        if(!started || gamePaused || replay.active || driverState.out) return;
+        if(!started || pcsPaused || replay.active || driverState.out) return;
         const spec=currentGarageCar(gameMode);
         if(!spec.turbo) return;
         turboActive=true;
@@ -7678,13 +7658,13 @@ animate();
 
     sirenBtn.addEventListener("pointerdown",e=>{
         e.preventDefault();
-        if(!started || gamePaused || replay.active) return;
+        if(!started || pcsPaused || replay.active) return;
         if(gameMode==="police") toggleSiren();
     },{passive:false});
 
     arrestBtn.addEventListener("pointerdown",e=>{
         e.preventDefault();
-        if(!started || gamePaused || replay.active) return;
+        if(!started || pcsPaused || replay.active) return;
         if(gameMode==="police") arrestThief();
     },{passive:false});
 
