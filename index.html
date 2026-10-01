@@ -1458,8 +1458,19 @@ function createChunk(cx,cz){
 ////////////////////////////////////////////////////////////
 // ENDLESS WORLD
 ////////////////////////////////////////////////////////////
-// GAME SESSION STATE -- declared early so touch/mobile startup callbacks can safely read it.
+// GAME SESSION STATE -- declared early so all startup and control callbacks can safely read it.
 var started=false;
+
+// CHASE REPLAY STATE -- declared before any function that may reference it.
+var replay={
+    active:false,
+    frames:[],
+    index:0,
+    elapsed:0,
+    sampleAccumulator:0,
+    sampleStep:.033333,
+    finished:false
+};
 
 
 function generateWorldAround(xPos,zPos){
@@ -6373,15 +6384,7 @@ let caughtFreeze=false;
 // CHASE REPLAY
 ////////////////////////////////////////////////////////////
 
-const replay={
-    active:false,
-    frames:[],
-    index:0,
-    elapsed:0,
-    sampleAccumulator:0,
-    sampleStep:.033333,
-    finished:false
-};
+
 
 // Keep enough recorded history for a smooth ~12 second replay.
 const REPLAY_MAX_FRAMES=360;
@@ -7559,9 +7562,6 @@ function animate(){
 
 animate();
 
-}
-
-
 
 ////////////////////////////////////////////////////////////
 // MOBILE TOUCH CONTROLS
@@ -7693,6 +7693,10 @@ animate();
     window.updateMobileRoleState=updateMobileRoleState;
     updateMobileRoleState();
 })();
+
+
+}
+
 
 </script>
 
