@@ -1916,7 +1916,13 @@ function createBackupPolice(id){
         reverseTimer:0,
         reverseCooldown:0,
         confusionTimer:0,
-        confusionTarget:"real"
+        confusionTarget:"real",
+        damage:0,
+        destroyed:false,
+        fireGroup:null,
+        fireTime:0,
+        spreadClock:0,
+        hitCooldown:0
     };
     unit.group.visible=false;
     scene.add(unit.group);
@@ -1928,21 +1934,26 @@ createBackupPolice(1);
 createBackupPolice(2);
 
 function allPoliceUnits(){
-    const result=[policeCar];
+    const result=[];
+    if(!policeCar.userData.destroyed && policeCar.visible) result.push(policeCar);
     for(const unit of policeSquad){
-        if(unit.active && unit.group.visible) result.push(unit.group);
+        if(unit.active && !unit.destroyed && unit.group.visible) result.push(unit.group);
     }
     return result;
 }
 
 function nearestPoliceToThief(){
-    let best=policeCar;
-    let bestD=Math.hypot(
-        policeCar.position.x-thiefCar.position.x,
-        policeCar.position.z-thiefCar.position.z
-    );
+    let best=null;
+    let bestD=Infinity;
+    if(!policeCar.userData.destroyed && policeCar.visible){
+        best=policeCar;
+        bestD=Math.hypot(
+            policeCar.position.x-thiefCar.position.x,
+            policeCar.position.z-thiefCar.position.z
+        );
+    }
     for(const unit of policeSquad){
-        if(!unit.active || !unit.group.visible) continue;
+        if(!unit.active || unit.destroyed || !unit.group.visible) continue;
         const d=Math.hypot(
             unit.group.position.x-thiefCar.position.x,
             unit.group.position.z-thiefCar.position.z
@@ -2008,6 +2019,12 @@ function activatePoliceSquad(){
         unit.speed=0;
         unit.confusionTimer=0;
         unit.confusionTarget="real";
+        unit.damage=0;
+        unit.destroyed=false;
+        unit.fireTime=0;
+        unit.spreadClock=0;
+        unit.hitCooldown=0;
+        if(unit.fireGroup){ scene.remove(unit.fireGroup); unit.fireGroup=null; }
         unit.active=true;
         unit.group.visible=true;
         const spec=currentGarageCar("police");
@@ -2035,7 +2052,7 @@ function updateBackupPoliceAI(dt){
 
     for(let i=0;i<policeSquad.length;i++){
         const unit=policeSquad[i];
-        if(!unit.active) continue;
+        if(!unit.active || unit.destroyed) continue;
 
         updateBackupPoliceConfusion(unit,dt,i);
         unit.reverseCooldown=Math.max(0,unit.reverseCooldown-dt);
@@ -2302,6 +2319,136 @@ function updateVehicleHUD(){
     }
     if(coinEl) coinEl.textContent=coins;
     updateCatchUI();
+}
+
+////////////////////////////////////////////////////////////
+// POLICE CRASH DAMAGE / FIRE
+////////////////////////////////////////////////////////////
+
+function makeFireEffect(){
+    const g=new THREE.Group();
+    g.userData.fireClock=Math.random()*10;
+    const mats=[
+        new THREE.MeshBasicMaterial({color:0xff3b00,transparent:true,opacity:.92}),
+        new THREE.MeshBasicMaterial({color:0xffa000,transparent:true,opacity:.90}),
+        new THREE.MeshBasicMaterial({color:0xffff66,transparent:true,opacity:.82})
+    ];
+    for(let i=0;i<6;i++){
+        const flame=new THREE.Mesh(new THREE.ConeGeometry(.20+.07*(i%3),.82+.24*(i%3),6),mats[i%3]);
+        flame.position.set((i-2.5)*.18,.82+(i%2)*.18,(i%2?-.16:.16));
+        g.add(flame);
+    }
+    const glow=new THREE.PointLight(0xff5a00,3.2,12);
+    glow.position.set(0,1.0,0);
+    g.add(glow);
+    return g;
+}
+function attachFire(group){
+    if(!group) return null;
+    const fire=makeFireEffect();
+    group.add(fire);
+    return fire;
+}
+function animateFire(fire,dt){
+    if(!fire) return;
+    fire.userData.fireClock=(fire.userData.fireClock||0)+dt*10;
+    const pulse=1+Math.sin(fire.userData.fireClock)*.12;
+    fire.scale.set(pulse,.92+Math.abs(Math.sin(fire.userData.fireClock*.72))*.25,pulse);
+    fire.children.forEach((child,i)=>{
+        if(child.isMesh){
+            child.rotation.y+=dt*(2+i*.22);
+            child.position.y=.82+(i%2)*.18+Math.sin(fire.userData.fireClock+i)*.05;
+        }else if(child.isPointLight){
+            child.intensity=2.5+Math.sin(fire.userData.fireClock*1.4)*.65;
+        }
+    });
+}
+function igniteTrafficCar(t){
+    if(!t || !t.visible || t.userData.onFire) return;
+    t.userData.onFire=true;
+    t.userData.fireTime=0;
+    t.userData.spreadClock=0;
+    t.userData.speed=0;
+    t.userData.fireGroup=attachFire(t);
+}
+function igniteNearbyTraffic(source){
+    if(!source) return;
+    let ignited=0;
+    for(const t of traffic){
+        if(!t.visible || t.userData.onFire) continue;
+        const d=Math.hypot(t.position.x-source.position.x,t.position.z-source.position.z);
+        if(d<=11.5){ igniteTrafficCar(t); ignited++; }
+    }
+    if(ignited>0) showNotice("🔥 Nearby traffic caught fire!");
+}
+function destroyPoliceCar(){
+    if(policeCar.userData.destroyed) return;
+    policeCar.userData.destroyed=true;
+    car.speed=0;
+    vehicleDamage.police=100;
+    if(!policeCar.userData.fireGroup) policeCar.userData.fireGroup=attachFire(policeCar);
+    policeCar.userData.fireTime=0;
+    policeCar.userData.spreadClock=0;
+    igniteNearbyTraffic(policeCar);
+    showNotice("🔥 POLICE CAR DESTROYED! Nearby traffic caught fire!");
+}
+function damageMainPoliceFromThief(amount){
+    if(gameMode!=="thief" || policeCar.userData.destroyed) return;
+    if((policeCar.userData.hitCooldown||0)>0) return;
+    policeCar.userData.hitCooldown=.30;
+    const armor=Math.max(.5,currentGarageCar("police").armor||1);
+    vehicleDamage.police=Math.min(100,vehicleDamage.police+Math.max(.5,amount/armor));
+    updateVehicleHUD();
+    if(vehicleDamage.police>=100) destroyPoliceCar();
+    else showNotice("🚔 Police car damage: "+Math.round(vehicleDamage.police)+"%");
+}
+function destroyBackupPolice(unit){
+    if(!unit || unit.destroyed) return;
+    unit.destroyed=true;
+    unit.active=false;
+    unit.speed=0;
+    unit.damage=100;
+    unit.fireTime=0;
+    unit.spreadClock=0;
+    if(!unit.fireGroup) unit.fireGroup=attachFire(unit.group);
+    unit.group.visible=true;
+    igniteNearbyTraffic(unit.group);
+    showNotice("🔥 POLICE UNIT "+unit.id+" DESTROYED! Nearby traffic caught fire!");
+}
+function damageBackupPoliceFromThief(unit,amount){
+    if(!unit || !unit.active || unit.destroyed) return;
+    if((unit.hitCooldown||0)>0) return;
+    unit.hitCooldown=.30;
+    const armor=Math.max(.5,currentGarageCar("police").armor||1);
+    unit.damage=Math.min(100,unit.damage+Math.max(.5,amount/armor));
+    if(unit.damage>=100) destroyBackupPolice(unit);
+    else showNotice("🚔 Police unit "+unit.id+" damage: "+Math.round(unit.damage)+"%");
+}
+function updatePoliceFire(dt){
+    policeCar.userData.hitCooldown=Math.max(0,(policeCar.userData.hitCooldown||0)-dt);
+    for(const unit of policeSquad){ unit.hitCooldown=Math.max(0,(unit.hitCooldown||0)-dt); }
+    if(policeCar.userData.fireGroup){
+        policeCar.userData.fireTime=(policeCar.userData.fireTime||0)+dt;
+        policeCar.userData.spreadClock=(policeCar.userData.spreadClock||0)+dt;
+        animateFire(policeCar.userData.fireGroup,dt);
+        if(policeCar.userData.spreadClock>=1.4){ policeCar.userData.spreadClock=0; igniteNearbyTraffic(policeCar); }
+    }
+    for(const unit of policeSquad){
+        if(unit.fireGroup){
+            unit.fireTime=(unit.fireTime||0)+dt;
+            unit.spreadClock=(unit.spreadClock||0)+dt;
+            animateFire(unit.fireGroup,dt);
+            if(unit.spreadClock>=1.4){ unit.spreadClock=0; igniteNearbyTraffic(unit.group); }
+        }
+    }
+    for(const t of traffic){
+        if(!t.userData.onFire || !t.userData.fireGroup) continue;
+        t.userData.fireTime=(t.userData.fireTime||0)+dt;
+        t.userData.spreadClock=(t.userData.spreadClock||0)+dt;
+        t.userData.speed=0;
+        animateFire(t.userData.fireGroup,dt);
+        if(t.userData.spreadClock>=1.8){ t.userData.spreadClock=0; igniteNearbyTraffic(t); }
+    }
 }
 
 ////////////////////////////////////////////////////////////
@@ -3508,6 +3655,10 @@ function createTrafficCar(){
 
     t.userData.speed=
         t.userData.targetSpeed;
+    t.userData.onFire=false;
+    t.userData.fireTime=0;
+    t.userData.spreadClock=0;
+    t.userData.fireGroup=null;
 
     scene.add(t);
 
@@ -6951,21 +7102,46 @@ function checkCollisions(dt){
     }
 
     if(gameMode==="thief" && thief.active && !thief.caught){
-        // Do not push the police away from the thief here.
-        // The police AI itself stops at a safe distance, allowing the 2-second
-        // close-pursuit timer to work reliably.
-        const d=policeCar.position.distanceTo(thiefCar.position);
-        if(d<3.8){
-            const policeRamPower=currentGarageCar("police").ramPower||1;
-            const thiefRamPower=currentGarageCar("thief").ramPower||1;
-            applyVehicleDamage("police",Math.max(1,4/Math.max(1,policeRamPower)),"collision");
-            applyVehicleDamage("thief",4*policeRamPower/Math.max(1,.85*thiefRamPower),"collision");
-            const dx=thiefCar.position.x-policeCar.position.x;
-            const dz=thiefCar.position.z-policeCar.position.z;
-            const len=Math.max(.001,Math.hypot(dx,dz));
-            policeCar.position.x-=dx/len*(3.8-d)*.35;
-            policeCar.position.z-=dz/len*(3.8-d)*.35;
-            car.speed=0;
+        // The player thief can smash into police vehicles. Civilian traffic
+        // remains protected by the earlier thief traffic safety guard.
+        const policeRamPower=currentGarageCar("police").ramPower||1;
+        const thiefRamPower=currentGarageCar("thief").ramPower||1;
+        const hitPower=Math.max(5,Math.abs(thief.speed)*3.0+(currentGarageCar("thief").ramPower||1)*2.5);
+
+        if(!policeCar.userData.destroyed){
+            const d=policeCar.position.distanceTo(thiefCar.position);
+            if(d<3.8){
+                damageMainPoliceFromThief(hitPower);
+                applyVehicleDamage("thief",Math.max(1,2.5*policeRamPower/Math.max(1,.85*thiefRamPower)),"collision");
+                if(!policeCar.userData.destroyed){
+                    const dx=thiefCar.position.x-policeCar.position.x;
+                    const dz=thiefCar.position.z-policeCar.position.z;
+                    const len=Math.max(.001,Math.hypot(dx,dz));
+                    policeCar.position.x-=dx/len*(3.8-d)*.30;
+                    policeCar.position.z-=dz/len*(3.8-d)*.30;
+                }
+                thief.speed*=.72;
+            }
+        }
+
+        for(const unit of policeSquad){
+            if(!unit.active || unit.destroyed || !unit.group.visible) continue;
+            const d=Math.hypot(
+                thiefCar.position.x-unit.group.position.x,
+                thiefCar.position.z-unit.group.position.z
+            );
+            if(d<3.8){
+                damageBackupPoliceFromThief(unit,hitPower*1.08);
+                applyVehicleDamage("thief",Math.max(1,2.2*policeRamPower/Math.max(1,.85*thiefRamPower)),"collision");
+                if(!unit.destroyed){
+                    const dx=thiefCar.position.x-unit.group.position.x;
+                    const dz=thiefCar.position.z-unit.group.position.z;
+                    const len=Math.max(.001,Math.hypot(dx,dz));
+                    unit.group.position.x-=dx/len*(3.8-d)*.28;
+                    unit.group.position.z-=dz/len*(3.8-d)*.28;
+                }
+                thief.speed*=.72;
+            }
         }
     }
 
@@ -6980,10 +7156,12 @@ function checkCollisions(dt){
     ){
 
         const nearestPolice=nearestPoliceToThief();
-        const policeDistance=Math.hypot(
-            thiefCar.position.x-nearestPolice.position.x,
-            thiefCar.position.z-nearestPolice.position.z
-        );
+        const policeDistance=nearestPolice
+            ? Math.hypot(
+                thiefCar.position.x-nearestPolice.position.x,
+                thiefCar.position.z-nearestPolice.position.z
+            )
+            : Infinity;
 
         if(
             policeDistance<=THIEF_CAPTURE_DISTANCE
@@ -7615,6 +7793,18 @@ function setGameMode(mode){
 function startGame(mode){
 
     pcsPaused=false;
+    policeCar.userData.destroyed=false;
+    policeCar.userData.hitCooldown=0;
+    vehicleDamage.police=0;
+    if(policeCar.userData.fireGroup){ scene.remove(policeCar.userData.fireGroup); policeCar.userData.fireGroup=null; }
+    for(const unit of policeSquad){
+        unit.damage=0;
+        unit.destroyed=false;
+        unit.fireTime=0;
+        unit.spreadClock=0;
+        unit.hitCooldown=0;
+        if(unit.fireGroup){ scene.remove(unit.fireGroup); unit.fireGroup=null; }
+    }
     const pauseOverlay=document.getElementById("pauseOverlay");
     if(pauseOverlay) pauseOverlay.style.display="none";
     setGameMode(mode);
@@ -7789,6 +7979,9 @@ function animate(){
 
             // Collisions
             checkCollisions(dt);
+
+            // Police destruction and fire spread
+            updatePoliceFire(dt);
 
             // Remember both vehicles for the chase replay.
             recordReplayFrame(dt);
