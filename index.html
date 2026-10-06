@@ -2233,6 +2233,8 @@ function resetPoliceChaseProgress(){
   resetSessionGarageUpgrades();
   // A true NEW GAME starts a fresh economy and encounter.
   coins=0;
+  for(const k of Object.keys(vehicleUnlocks)) delete vehicleUnlocks[k];
+  selectedGarage.thief="street";
   try{localStorage.removeItem("policeCityCoins");}catch(e){}
   // A true NEW GAME always starts Special Enforcer at 0/3.
   thiefCatchCount=0;
@@ -2331,12 +2333,35 @@ const GARAGE_CARS={
         {id:"nitro",name:"💥 Nitro Coupe",color:0xf2d200,maxSpeed:3.35,accel:.10,braking:.10,handling:1.10,turbo:true,turboMult:1.58,turboDuration:2.0,jump:false,armor:.82,ram:1.00,scale:.98,feature:"Extreme nitro burst • highest escape speed"},
         {id:"bouncer",name:"🪩 Bouncer",color:0xff4d9d,maxSpeed:2.85,accel:.065,braking:.10,handling:.98,turbo:false,jump:true,jumpPower:8.2,armor:1.30,ram:.78,scale:1.08,feature:"Power jump • reinforced chassis"},
         {id:"drift",name:"🌀 Drift King",color:0x6a35b5,maxSpeed:3.10,accel:.08,braking:.11,handling:1.22,turbo:true,turboMult:1.40,turboDuration:2.3,jump:false,armor:.88,ram:1.00,scale:1.00,feature:"Very sharp steering • turbo drift setup"},
-        {id:"doubleTrouble",name:"🎭 Double Trouble",color:0xf05a28,maxSpeed:3.05,accel:.08,braking:.105,handling:1.08,turbo:true,turboMult:1.44,turboDuration:2.8,jump:true,jumpPower:10.8,jumpForwardBoost:6.2,armor:1.05,ram:1.05,scale:1.03,helper:true,feature:"THE REAL THIEF + THE FAKE THIEF • HIGH JUMP"}
+        {id:"doubleTrouble",name:"🎭 Double Trouble",color:0xf05a28,maxSpeed:3.05,accel:.08,braking:.105,handling:1.08,turbo:true,turboMult:1.44,turboDuration:2.8,jump:true,jumpPower:10.8,jumpForwardBoost:6.2,armor:1.05,ram:1.05,scale:1.03,helper:true,locked:true,unlockCoins:1000,feature:"THE REAL THIEF + THE FAKE THIEF • HIGH JUMP • $1000 TO UNLOCK"}
     ]
 };
 
 let selectedGarage={police:"cruiser",thief:"street"};
 let garageViewRole="police";
+// Vehicle unlocks are session-only. Reload/New Game resets them.
+const vehicleUnlocks={};
+function vehicleUnlocked(role,v){
+    if(!v || !v.locked) return true;
+    if(v.id==="special" && role==="police") return specialPoliceUnlocked();
+    if(v.unlockCoins!=null) return !!vehicleUnlocks[role+":"+v.id];
+    return false;
+}
+function unlockVehicle(role,id){
+    const v=(GARAGE_CARS[role]||[]).find(x=>x.id===id);
+    if(!v || v.unlockCoins==null || vehicleUnlocked(role,v)) return false;
+    const cost=Number(v.unlockCoins)||0;
+    if(coins<cost){
+        showNotice("🪙 Need $"+cost+" to unlock "+v.name+".");
+        return false;
+    }
+    coins-=cost;
+    vehicleUnlocks[role+":"+id]=true;
+    updateVehicleHUD();
+    renderGarage(role);
+    showNotice("🔓 "+v.name+" unlocked! -$"+cost);
+    return true;
+}
 
 // Coin-powered upgrades, kept only for the current game session.
 // Reloading the page starts all vehicle upgrades back at Level 0.
@@ -2425,9 +2450,9 @@ function currentGarageCar(role=gameMode){
     if(role!=="police" && role!=="thief") role="police";
     const list=Array.isArray(GARAGE_CARS[role])&&GARAGE_CARS[role].length?GARAGE_CARS[role]:GARAGE_CARS.police;
     const selected=list.find(v=>v.id===selectedGarage[role]);
-    const base=(selected && (!selected.locked || specialPoliceUnlocked()))
+    const base=(selected && vehicleUnlocked(role,selected))
         ? selected
-        : (list.find(v=>!v.locked||specialPoliceUnlocked())||list[0]);
+        : (list.find(v=>vehicleUnlocked(role,v))||list[0]);
     return upgradedCarData(role,base.id,base);
 }
 
@@ -2455,8 +2480,14 @@ function addVariantExtra(model,obj){
 function applyGarageCar(role,id,announce=true){
     const baseData=(GARAGE_CARS[role]||[]).find(v=>v.id===id);
     if(!baseData) return;
-    if(baseData.locked && !specialPoliceUnlocked()){
-        showNotice("🔒 SPECIAL ENFORCER is locked — complete 3 police chases ("+thiefCatchCount+"/3)");
+    if(!vehicleUnlocked(role,baseData)){
+        if(baseData.id==="special" && role==="police"){
+            showNotice("🔒 SPECIAL ENFORCER is locked — complete 3 police chases ("+thiefCatchCount+"/3)");
+        }else if(baseData.unlockCoins!=null){
+            showNotice("🔒 "+baseData.name+" is locked — unlock for $"+baseData.unlockCoins+".");
+        }else{
+            showNotice("🔒 Vehicle locked.");
+        }
         return;
     }
     selectedGarage[role]=id;
@@ -2578,7 +2609,7 @@ function renderGarage(role=gameMode){
         if(v.handling>1.1) chips.push("🎯 HANDLING");
         if(v.ram>1.15 || v.ram<.9 || v.ramPower) chips.push("💥 RAM");
         if(v.helper) chips.push("🎭 FAKE THIEF");
-        const locked=!!v.locked && !specialPoliceUnlocked();
+        const locked=!vehicleUnlocked(role,v);
         return `
         <div class="garageCard ${v.id===chosen?"selected":""} ${locked?"locked":""}">
             <div class="carTitle">${locked?"🔒 ":""}${v.name}</div>
@@ -2589,10 +2620,18 @@ function renderGarage(role=gameMode){
             </div>
             <div class="garageChips">${chips.map(c=>`<span>${c}</span>`).join("")}</div>
             <div class="carFeature">${v.feature}${v.turbo?"<br>⚡ Press SHIFT for turbo": ""}${v.jump?"<br>⬆ Press Q for jump": ""}${v.helper?"<br>🎭 The fake thief drives independently and does not stick to you.": ""}</div>
-            ${locked?`<div class="garageLock">🔒 LOCKED<br>Complete 3 <b>police chases</b> to unlock.<br>Progress: ${thiefCatchCount}/3</div>`:`<button class="garageSelect ${v.id===chosen?"alt":""}" data-vehicle="${v.id}">${v.id===chosen?"✅ SELECTED":"SELECT THIS CAR"}</button>`}
+            ${locked?`<div class="garageLock">${v.id==="special"?"🔒 LOCKED<br>Complete 3 <b>police chases</b> to unlock.<br>Progress: "+thiefCatchCount+"/3":v.unlockCoins!=null?"🔒 LOCKED<br>Pay <b>$"+v.unlockCoins+"</b> to unlock.":"🔒 LOCKED"}</div>${v.unlockCoins!=null?`<button class="garageSelect" data-unlock="${v.id}">🪙 $${v.unlockCoins} UNLOCK</button>`:""}`:`<button class="garageSelect ${v.id===chosen?"alt":""}" data-vehicle="${v.id}">${v.id===chosen?"✅ SELECTED":"SELECT THIS CAR"}</button>`}
         </div>`;
     }).join("");
-    opts.querySelectorAll(".garageSelect").forEach(btn=>btn.onclick=()=>{applyGarageCar(role,btn.dataset.vehicle);updateRoleUI();renderGarage(role);});
+    opts.querySelectorAll(".garageSelect").forEach(btn=>btn.onclick=()=>{
+        if(btn.dataset.unlock){
+            unlockVehicle(role,btn.dataset.unlock);
+            return;
+        }
+        applyGarageCar(role,btn.dataset.vehicle);
+        updateRoleUI();
+        renderGarage(role);
+    });
     updateSpecialEncounterUI();
     document.getElementById("garagePoliceTab").classList.toggle("active",role==="police");
     document.getElementById("garageThiefTab").classList.toggle("active",role==="thief");
@@ -4891,9 +4930,204 @@ const thief={
     reverseCooldown:0
 };
 
+/* ============================================================
+   THIEF COIN COLLECTION
+   - Coins exist only for the player while in THIEF mode.
+   - A green 3D arrow points to the current coin.
+   - Collecting a coin gives +100 coins.
+   - The target is moved to another safe road position after collection.
+   ============================================================ */
+const thiefCoinTarget={
+    group:null,
+    arrow:null,
+    active:false,
+    collected:0,
+    spin:0,
+    lastDistance:Infinity
+};
+
+function makeGreenTargetArrow(){
+    const g=new THREE.Group();
+
+    const shaft=new THREE.Mesh(
+        new THREE.BoxGeometry(.34,.34,3.3),
+        new THREE.MeshStandardMaterial({
+            color:0x2cff65,
+            emissive:0x087a2b,
+            emissiveIntensity:1.8
+        })
+    );
+    shaft.position.z=1.55;
+    g.add(shaft);
+
+    const head=new THREE.Mesh(
+        new THREE.ConeGeometry(.92,1.9,4),
+        new THREE.MeshStandardMaterial({
+            color:0x25ff61,
+            emissive:0x0a9e35,
+            emissiveIntensity:2.2
+        })
+    );
+    head.rotation.x=Math.PI/2;
+    head.position.z=3.55;
+    g.add(head);
+
+    const glow=new THREE.PointLight(0x22ff66,3.5,28);
+    glow.position.set(0,.5,2.8);
+    g.add(glow);
+
+    g.visible=false;
+    scene.add(g);
+    return g;
+}
+
+function ensureThiefCoinTarget(){
+    if(!thiefCoinTarget.group){
+        const g=new THREE.Group();
+
+        const coin=new THREE.Mesh(
+            new THREE.CylinderGeometry(.68,.68,.22,28),
+            new THREE.MeshStandardMaterial({
+                color:0xffd21f,
+                emissive:0x8a6500,
+                emissiveIntensity:1.8,
+                metalness:.55,
+                roughness:.26
+            })
+        );
+        coin.rotation.z=Math.PI/2;
+        g.add(coin);
+
+        const ring=new THREE.Mesh(
+            new THREE.TorusGeometry(.62,.10,10,28),
+            new THREE.MeshStandardMaterial({
+                color:0xfff07a,
+                emissive:0xffb300,
+                emissiveIntensity:1.5
+            })
+        );
+        ring.rotation.y=Math.PI/2;
+        g.add(ring);
+
+        const light=new THREE.PointLight(0xffd21f,3.5,14);
+        light.position.y=.4;
+        g.add(light);
+
+        g.position.y=1.1;
+        g.visible=false;
+        g.frustumCulled=false;
+        g.traverse(o=>{if(o.isMesh) o.frustumCulled=false;});
+        thiefCoinTarget.group=g;
+        scene.add(g);
+    }
+
+    if(!thiefCoinTarget.arrow){
+        thiefCoinTarget.arrow=makeGreenTargetArrow();
+    }
+}
+
+function hideThiefCoinTarget(){
+    if(thiefCoinTarget.group) thiefCoinTarget.group.visible=false;
+    if(thiefCoinTarget.arrow) thiefCoinTarget.arrow.visible=false;
+    thiefCoinTarget.active=false;
+}
+
+function safeCoinRoadPoint(){
+    const h=thief.heading;
+    const fx=Math.sin(h), fz=Math.cos(h);
+    const sx=Math.cos(h), sz=-Math.sin(h);
+
+    const candidates=[];
+    for(let dist=45;dist<=120;dist+=15){
+        candidates.push(
+            {x:thiefCar.position.x+fx*dist+sx*13,z:thiefCar.position.z+fz*dist+sz*13},
+            {x:thiefCar.position.x+fx*dist-sx*13,z:thiefCar.position.z+fz*dist-sz*13},
+            {x:thiefCar.position.x-fx*dist+sx*13,z:thiefCar.position.z-fz*dist+sz*13},
+            {x:thiefCar.position.x-fx*dist-sx*13,z:thiefCar.position.z-fz*dist-sz*13}
+        );
+    }
+
+    for(const c of candidates){
+        if(!blocked(c.x,c.z,2.1)) return {x:c.x,z:c.z};
+    }
+
+    const r=roadSnapPoint(
+        thiefCar.position.x+fx*60,
+        thiefCar.position.z+fz*60
+    );
+    return {x:r.x,z:r.z};
+}
+
+function spawnThiefCoin(){
+    if(gameMode!=="thief" || !thief.active || thief.caught) {
+        hideThiefCoinTarget();
+        return;
+    }
+
+    ensureThiefCoinTarget();
+
+    const pt=safeCoinRoadPoint();
+    thiefCoinTarget.group.position.set(pt.x,1.1,pt.z);
+    thiefCoinTarget.group.visible=true;
+    thiefCoinTarget.active=true;
+    thiefCoinTarget.lastDistance=Infinity;
+
+    const dx=pt.x-thiefCar.position.x;
+    const dz=pt.z-thiefCar.position.z;
+    const angle=Math.atan2(dx,dz);
+    thiefCoinTarget.arrow.position.set(
+        thiefCar.position.x,
+        thiefCar.position.y+7+Math.sin(performance.now()*.004)*.25,
+        thiefCar.position.z
+    );
+    thiefCoinTarget.arrow.rotation.y=angle;
+    thiefCoinTarget.arrow.visible=true;
+}
+
+function resetThiefCoinTarget(){
+    thiefCoinTarget.collected=0;
+    spawnThiefCoin();
+}
+
+function updateThiefCoinTarget(dt){
+    if(gameMode!=="thief" || !thief.active || thief.caught || replay.active || caughtFreeze){
+        hideThiefCoinTarget();
+        return;
+    }
+
+    if(!thiefCoinTarget.group || !thiefCoinTarget.arrow || !thiefCoinTarget.active){
+        spawnThiefCoin();
+    }
+    if(!thiefCoinTarget.group || !thiefCoinTarget.arrow) return;
+
+    const pulse=1+Math.sin(performance.now()*.006)*.08;
+    thiefCoinTarget.group.rotation.y+=dt*2.4;
+    thiefCoinTarget.group.scale.set(pulse,pulse,pulse);
+
+    const dx=thiefCoinTarget.group.position.x-thiefCar.position.x;
+    const dz=thiefCoinTarget.group.position.z-thiefCar.position.z;
+    const d=Math.hypot(dx,dz);
+    thiefCoinTarget.lastDistance=d;
+
+    thiefCoinTarget.arrow.position.set(
+        thiefCar.position.x,
+        thiefCar.position.y+7+Math.sin(performance.now()*.004)*.25,
+        thiefCar.position.z
+    );
+    thiefCoinTarget.arrow.rotation.y=Math.atan2(dx,dz);
+    thiefCoinTarget.arrow.visible=true;
+
+    if(d<=6){
+        coins+=100;
+        thiefCoinTarget.collected++;
+        updateVehicleHUD();
+        showNotice("🪙 COIN COLLECTED! +$100");
+        spawnThiefCoin();
+    }
+}
+
 ////////////////////////////////////////////////////////////
 // PLACE THIEF 35-60 METERS AWAY
-////////////////////////////////////////////////////////////
 
 function placeThief(){
 
@@ -7323,6 +7557,7 @@ function setGameMode(mode){
     // Make sure the thief exists when starting as the thief.
     if(gameMode==="thief"){
         resetPoliceAI();
+        resetThiefCoinTarget();
         placeThief();
         activatePoliceSquad();
         thiefCar.visible=true;
@@ -7349,6 +7584,7 @@ function setGameMode(mode){
             "Drive away from 🚔 Police";
 
     }else{
+        hideThiefCoinTarget();
         deactivatePoliceSquad();
         thiefCar.visible=true;
         thief.active=true;
@@ -7540,6 +7776,7 @@ function animate(){
             updateThief();
             updateFakeThief(dt);
             updateDriverOnFoot(dt);
+            updateThiefCoinTarget(dt);
 
             // Garage vehicle abilities
             updateVehicleAbilities(dt);
