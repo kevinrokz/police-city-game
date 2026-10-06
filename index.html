@@ -2452,6 +2452,150 @@ function updatePoliceFire(dt){
 }
 
 ////////////////////////////////////////////////////////////
+// THIEF SHOOTING
+////////////////////////////////////////////////////////////
+
+const thiefProjectiles=[];
+let thiefShootCooldown=0;
+
+function getShootablePoliceTargets(){
+    const targets=[];
+    if(gameMode!=="thief" || !started) return targets;
+
+    if(!policeCar.userData.destroyed && policeCar.visible){
+        targets.push(policeCar);
+    }
+
+    for(const unit of policeSquad){
+        if(unit.active && !unit.destroyed && unit.group && unit.group.visible){
+            targets.push(unit.group);
+        }
+    }
+    return targets;
+}
+
+function nearestShootablePolice(){
+    const targets=getShootablePoliceTargets();
+    let best=null;
+    let bestDistance=Infinity;
+    for(const target of targets){
+        const d=Math.hypot(
+            target.position.x-thiefCar.position.x,
+            target.position.z-thiefCar.position.z
+        );
+        if(d<bestDistance){
+            bestDistance=d;
+            best=target;
+        }
+    }
+    return best;
+}
+
+function removeThiefProjectile(index){
+    const shot=thiefProjectiles[index];
+    if(!shot) return;
+    scene.remove(shot.mesh);
+    if(shot.mesh.geometry) shot.mesh.geometry.dispose();
+    if(shot.mesh.material) shot.mesh.material.dispose();
+    thiefProjectiles.splice(index,1);
+}
+
+function shootAtPolice(){
+    if(gameMode!=="thief" || !started || pcsPaused || replay.active || caughtFreeze || driverState.out){
+        return;
+    }
+    if(thiefShootCooldown>0) return;
+
+    const target=nearestShootablePolice();
+    if(!target){
+        showNotice("🔫 No police car in range.");
+        thiefShootCooldown=.15;
+        return;
+    }
+
+    const origin=new THREE.Vector3(
+        thiefCar.position.x,
+        thiefCar.position.y+1.05,
+        thiefCar.position.z
+    );
+
+    const aim=new THREE.Vector3(
+        target.position.x,
+        target.position.y+1.0,
+        target.position.z
+    );
+
+    const dir=aim.sub(origin);
+    const distance=dir.length();
+    if(!Number.isFinite(distance) || distance<0.01) return;
+    dir.normalize();
+
+    const mesh=new THREE.Mesh(
+        new THREE.SphereGeometry(.16,10,10),
+        new THREE.MeshBasicMaterial({color:0xffd22e})
+    );
+    mesh.position.copy(origin);
+    scene.add(mesh);
+
+    thiefProjectiles.push({
+        mesh,
+        vx:dir.x*62,
+        vy:dir.y*62,
+        vz:dir.z*62,
+        life:1.5,
+        target,
+        maxRange:Math.min(95,Math.max(25,distance+20))
+    });
+
+    thiefShootCooldown=.30;
+    showNotice("🔫 SHOT FIRED!");
+}
+
+function updateThiefProjectiles(dt){
+    thiefShootCooldown=Math.max(0,thiefShootCooldown-dt);
+
+    for(let i=thiefProjectiles.length-1;i>=0;i--){
+        const shot=thiefProjectiles[i];
+        if(!shot || !shot.mesh){
+            thiefProjectiles.splice(i,1);
+            continue;
+        }
+
+        shot.life-=dt;
+        shot.mesh.position.x+=shot.vx*dt;
+        shot.mesh.position.y+=shot.vy*dt;
+        shot.mesh.position.z+=shot.vz*dt;
+
+        const shotX=shot.mesh.position.x;
+        const shotZ=shot.mesh.position.z;
+
+        if(shot.life<=0 || blocked(shotX,shotZ,.12)){
+            removeThiefProjectile(i);
+            continue;
+        }
+
+        const target=shot.target;
+        if(target && target.visible && !(target.userData && target.userData.destroyed)){
+            const d=Math.hypot(
+                shotX-target.position.x,
+                shotZ-target.position.z
+            );
+            const dy=Math.abs(shot.mesh.position.y-(target.position.y+1.0));
+            if(d<2.6 && dy<2.8){
+                if(target===policeCar){
+                    damageMainPoliceFromThief(12);
+                }else{
+                    const unit=policeSquad.find(u=>u.group===target);
+                    if(unit) damageBackupPoliceFromThief(unit,12);
+                }
+                removeThiefProjectile(i);
+                continue;
+            }
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////
 // GARAGE VEHICLES / FEATURES
 ////////////////////////////////////////////////////////////
 
@@ -2909,6 +3053,11 @@ window.addEventListener(
             }
         }
 
+        if(e.code==="KeyS" && gameMode==="thief" && started && !driverState.out){
+            e.preventDefault();
+            shootAtPolice();
+            return;
+        }
         if(e.code==="KeyF"){
             e.preventDefault(); toggleDriverOut(); return;
         }
@@ -7578,6 +7727,8 @@ document.getElementById("specialEncounterUse").onclick=()=>{
 };
 
 function returnToMenu(){
+    for(let i=thiefProjectiles.length-1;i>=0;i--) removeThiefProjectile(i);
+    thiefShootCooldown=0;
     pcsPaused=false;
     const pauseOverlay=document.getElementById("pauseOverlay");
     if(pauseOverlay) pauseOverlay.style.display="none";
@@ -7640,6 +7791,8 @@ function updateRoleUI(){
 
 function switchRole(){
     if(!started) return;
+    for(let i=thiefProjectiles.length-1;i>=0;i--) removeThiefProjectile(i);
+    thiefShootCooldown=0;
     if(driverState.out && driverState.group){ scene.remove(driverState.group); driverState.out=false; }
     const db=document.getElementById("driverBadge"); if(db) db.style.display="none";
     caughtFreeze=false;
@@ -7681,6 +7834,7 @@ function switchRole(){
             "T Switch Role<br>"+
             "F Exit / Enter Car<br>"+
             "WASD Walk on Foot<br>"+
+            "S Shoot Police<br>"+
             "P Pause"+
             (gameMode==="police" && currentGarageCar("police").id==="special" ? "<br>⭐ SPECIAL: SHIFT Turbo • Q High Jump • R RAM • Armor" : "");
     }else{
@@ -7758,6 +7912,7 @@ function setGameMode(mode){
             "← → Steer<br>"+
             "F Exit / Enter Car<br>"+
             "WASD Walk on Foot<br>"+
+            "S Shoot Police<br>"+
             "P Pause<br>"+
             "Drive away from 🚔 Police";
 
@@ -7792,6 +7947,8 @@ function setGameMode(mode){
 
 function startGame(mode){
 
+    for(let i=thiefProjectiles.length-1;i>=0;i--) removeThiefProjectile(i);
+    thiefShootCooldown=0;
     pcsPaused=false;
     policeCar.userData.destroyed=false;
     policeCar.userData.hitCooldown=0;
@@ -7967,6 +8124,7 @@ function animate(){
             updateFakeThief(dt);
             updateDriverOnFoot(dt);
             updateThiefCoinTarget(dt);
+            updateThiefProjectiles(dt);
 
             // Garage vehicle abilities
             updateVehicleAbilities(dt);
