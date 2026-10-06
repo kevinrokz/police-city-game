@@ -380,7 +380,7 @@ canvas{
     #mobileJoystick{
         position:fixed;
         right:14px;
-        bottom:98px;
+        bottom:150px;
         width:112px;
         height:112px;
         border-radius:50%;
@@ -427,6 +427,7 @@ canvas{
         box-sizing:border-box;
         box-shadow:0 4px 12px rgba(0,0,0,.35);
     }
+    .mobileAction:disabled{opacity:.45;filter:grayscale(.5);}
     .mobileAction{
         position:fixed;
         width:58px;
@@ -441,6 +442,11 @@ canvas{
         touch-action:none;
         -webkit-tap-highlight-color:transparent;
         user-select:none;
+    }
+    #mobileJump{
+        right:148px;
+        bottom:14px;
+        background:rgba(110,55,190,.92);
     }
     #mobileTurbo{
         right:82px;
@@ -460,7 +466,7 @@ canvas{
         background:rgba(180,25,25,.92);
     }
     #switchRole{
-        bottom:14px !important;
+        bottom:80px !important;
         width:102px;
         min-height:56px;
         padding:10px 8px;
@@ -473,7 +479,7 @@ canvas{
     #mobileControls .mobileLabel{
         position:fixed;
         right:26px;
-        bottom:213px;
+        bottom:265px;
         color:#fff;
         background:rgba(0,0,0,.56);
         padding:4px 7px;
@@ -498,13 +504,14 @@ canvas{
     #garagePanel,#menuPanel,#replayPanel{max-width:94vw;max-height:86vh;overflow:auto;}
 }
 @media (max-width:380px){
-    #mobileJoystick{width:100px;height:100px;bottom:96px;}
+    #mobileJoystick{width:100px;height:100px;bottom:146px;}
     #mobileStick{width:44px;height:44px;}
-    #mobileTurbo,#mobileSiren{width:52px;height:52px;font-size:20px;}
-    #mobileTurbo{right:70px;}
+    #mobileJump,#mobileTurbo,#mobileSiren{width:52px;height:52px;font-size:20px;}
+    #mobileJump{right:134px;}
+    #mobileTurbo{right:72px;}
     #mobileSiren{right:10px;}
     #mobileArrest{left:10px;width:80px;height:52px;}
-    #switchRole{width:92px;min-height:52px;font-size:12px;}
+    #switchRole{width:92px;min-height:52px;font-size:12px;bottom:76px !important;}
     #mission{font-size:10px;}
 }
 
@@ -520,6 +527,7 @@ canvas{
         <div id="mobileStick"></div>
     </div>
     <div class="mobileLabel">JOYSTICK</div>
+    <button id="mobileJump" class="mobileAction" type="button" aria-label="Jump">⬆️</button>
     <button id="mobileTurbo" class="mobileAction" type="button" aria-label="Turbo">🚀</button>
     <button id="mobileSiren" class="mobileAction" type="button" aria-label="Siren">🚨</button>
     <button id="mobileArrest" class="mobileAction" type="button" aria-label="Arrest">🚔 ARREST</button>
@@ -7215,6 +7223,7 @@ function updateRoleUI(){
     }
     const specialBadge=document.getElementById("specialBadge");
     if(specialBadge) specialBadge.style.display=(gameMode==="police" && specialPoliceUnlocked() && currentGarageCar("police").id==="special")?"block":"none";
+    if(window.updateMobileRoleState) window.updateMobileRoleState();
 }
 
 function switchRole(){
@@ -7290,6 +7299,7 @@ function switchRole(){
 
     updateRoleUI();
     updateVehicleHUD();
+    if(window.updateMobileRoleState) window.updateMobileRoleState();
 }
 
 ////////////////////////////////////////////////////////////
@@ -7570,6 +7580,7 @@ animate();
     const root=document.getElementById("mobileControls");
     const joystick=document.getElementById("mobileJoystick");
     const stick=document.getElementById("mobileStick");
+    const jumpBtn=document.getElementById("mobileJump");
     const turboBtn=document.getElementById("mobileTurbo");
     const sirenBtn=document.getElementById("mobileSiren");
     const arrestBtn=document.getElementById("mobileArrest");
@@ -7639,6 +7650,22 @@ animate();
         resetStick();
     });
 
+    function activateTouchJump(){
+        if(!started || pcsPaused || replay.active || driverState.out) return;
+        const spec=currentGarageCar(gameMode);
+        if(!spec.jump || vehicleInAir || jumpCooldown>0) return;
+        jumpVelocity=Number(spec.jumpPower||6.2);
+        jumpForwardVelocity=Number(spec.jumpForwardBoost || (spec.id==="doubleTrouble" ? 6.2 : 0));
+        vehicleInAir=true;
+        jumpCooldown=1.0;
+        if(gameMode==="police" && spec.id==="special") {
+            showNotice("⭐ SPECIAL ENFORCER HIGH LONG JUMP!");
+        } else {
+            showNotice("⬆️ JUMP!");
+        }
+    }
+    jumpBtn.addEventListener("pointerdown",e=>{e.preventDefault();activateTouchJump();},{passive:false});
+
     function activateTouchTurbo(){
         if(!started || pcsPaused || replay.active || driverState.out) return;
         const spec=currentGarageCar(gameMode);
@@ -7676,13 +7703,17 @@ animate();
     window.addEventListener("blur",resetStick);
 
     function updateMobileRoleState(){
-        if(!arrestBtn || !sirenBtn) return;
+        if(!arrestBtn || !sirenBtn || !jumpBtn) return;
         const police=gameMode==="police";
+        const jumpReady=!!(currentGarageCar(gameMode).jump);
         arrestBtn.disabled=!police;
         sirenBtn.disabled=!police;
+        jumpBtn.disabled=!jumpReady;
         arrestBtn.style.opacity=police?"1":".45";
         sirenBtn.style.opacity=police?"1":".45";
+        jumpBtn.style.opacity=jumpReady?"1":".45";
         arrestBtn.textContent=police?"🚔 ARREST":"🚫 ARREST";
+        jumpBtn.textContent=jumpReady?"⬆️":"🚫";
     }
 
     // The existing role button already uses its normal onclick handler,
